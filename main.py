@@ -9,34 +9,45 @@ import shlex
 import time
 
 
-"""
-commit {
- - hash
- - message
- - author
- - timestamp
- - parent
-}
-
-Simply set relations:
-   commit
-   branch
-   commit addressed as ssa-like structures.
-
-   if (somethings that changed):
-      always consider it default as ssa-form.
-      so always new commits inserted,
-      it's def come from once.
-
-   This assume simplify the it' define always once,
-   so it don't require entire state tracking
-   and avoid self-dependencies in file log.
-   
-
-"""
 @dataclass
 class Commit:
-    """One immutable commit node in the DAG."""
+    """
+    commit {
+     - hash
+     - message
+     - author
+     - timestamp
+     - parents
+    }
+
+    Simply set the relations:
+       commits[hash] = commit node
+       parents = hashes of earlier nodes
+       branches[name] = current head hash
+
+    SSA-like view:
+       Each COMMIT defines a new node with a fresh hash in this session.
+       Existing commit metadata and parent links stay unchanged during recording.
+       Branch heads move to the new definition.
+
+       parent -> child:
+          1 ---+--> 2 (feature)
+               +--> 3 (main)
+
+    State walk:
+       new node -> edges -> search indexes -> move branch head
+       children[parent] records the reverse edge to each child.
+       LOG follows the stored commit graph.
+
+    Invariant:
+       A new node only refers to existing parents.
+       This keeps the graph acyclic during normal recording.
+
+    Dataclass:
+       __init__ accepts the fields below and stores their values.
+       __repr__ displays the fields; __eq__ compares their values.
+       Objects remain mutable; recording preserves existing commit nodes.
+    """
     hash: str
     message: str
     author: str
