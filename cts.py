@@ -39,6 +39,23 @@ def ids(nodes):
     return [node.hash for node in nodes]
 
 
+def state(repo):
+    return {
+        "initialized": repo.initialized,
+        "user": repo.user,
+        "current_branch": repo.current_branch,
+        "branches": dict(repo.branches),
+        "commits": {
+            key: (node.hash, node.message, node.author, node.timestamp, tuple(node.parents))
+            for key, node in repo.commits.items()
+        },
+        "children": {key: frozenset(value) for key, value in repo.children.items()},
+        "keyword_index": {key: tuple(value) for key, value in repo.keyword_index.items()},
+        "author_index": {key: tuple(value) for key, value in repo.author_index.items()},
+        "next_id": repo.next_id,
+    }
+
+
 def new_repo(ctx, user="Alice"):
     repo = ctx["module"].MiniGit()
     repo.init(user)
@@ -307,6 +324,141 @@ def _(ctx):
     path, error = repo.path(feature, main)
     equal(error, None, "path error")
     equal(path, [feature, base, main], "equal-length paths choose smaller hash neighbor")
+
+
+@case("atom_state_walk", 1)
+def _(ctx):
+    repo = new_repo(ctx)
+    equal(repo.branches, {"main": None}, "INIT: empty main")
+    equal(repo.next_id, 1, "INIT: first available ID")
+
+    repo.commit("Base base")
+    base = "0000001"
+    equal(repo.branches, {"main": base}, "COMMIT: main head")
+    equal(repo.commits[base].parents, [], "COMMIT: root has no parent")
+    equal(repo.children, {base: set()}, "COMMIT: root reverse edges")
+    equal(repo.keyword_index, {"base": [base]}, "COMMIT: duplicate token indexed once")
+    equal(repo.author_index, {"alice": [base]}, "COMMIT: author index")
+    equal(repo.next_id, 2, "COMMIT: ID consumed once")
+
+    before = state(repo)
+    equal(repo.branch("feature"), "Created branch: feature", "BRANCH response")
+    equal(state(repo), {**before, "branches": {"main": base, "feature": base}}, "BRANCH: copy head only")
+
+    before = state(repo)
+    equal(repo.switch("feature"), "Switched to branch: feature", "SWITCH response")
+    equal(state(repo), {**before, "current_branch": "feature"}, "SWITCH: change selected branch only")
+
+    repo.commit("Feature API")
+    feature = "0000002"
+    equal(repo.branches, {"main": base, "feature": feature}, "COMMIT: selected head advances")
+    equal(repo.commits[feature].parents, [base], "COMMIT: old head becomes parent")
+    equal(repo.children, {base: {feature}, feature: set()}, "COMMIT: reverse edge added")
+    equal(state(repo)["commits"][base], before["commits"][base], "COMMIT: existing node preserved")
+    equal(repo.keyword_index, {"base": [base], "feature": [feature], "api": [feature]}, "COMMIT: keyword additions")
+    equal(repo.author_index, {"alice": [base, feature]}, "COMMIT: author addition")
+    equal(repo.next_id, 3, "COMMIT: next available ID")
+
+
+@case("fork_query_walk", 2)
+def _(ctx):
+    repo, base, feature, main = fork(ctx)
+    before = state(repo)
+    queries = [
+        ("LOG", lambda: ids(repo.log()), [base, feature, main]),
+        ("PATH", lambda: repo.path(feature, main), ([feature, base, main], None)),
+        ("ANCESTORS", lambda: ids(repo.ancestors(main)), [base]),
+        ("SEARCH keyword", lambda: ids(repo.search_keyword("change")), [feature, main]),
+        ("SEARCH author", lambda: ids(repo.search_author("ALICE")), [base, feature, main]),
+        ("LOG again", lambda: ids(repo.log()), [base, feature, main]),
+    ]
+    for label, query, expected in queries:
+        equal(query(), expected, label + " result")
+        equal(state(repo), before, label + ": repository state preserved")
+
+    repo.commit("main tail")
+    tail = "0000004"
+    equal(repo.branches, {"main": tail, "feature": feature}, "COMMIT after queries: heads")
+    equal(repo.commits[tail].parents, [main], "COMMIT after queries: parent")
+    equal(repo.path(feature, tail), ([feature, base, main, tail], None), "PATH includes new child")
+    equal(ids(repo.ancestors(tail)), [base, main], "ANCESTORS excludes sibling")
+    equal(ids(repo.search_keyword("main")), [main, tail], "SEARCH includes new commit")
+    equal(ids(repo.search_keyword("main change")), [main], "SEARCH intersects tokens across branches")
+    equal(ids(repo.log()), [base, feature, main, tail], "LOG after queries and COMMIT")
+
+
+@case("rejected_transition_walk", 2, "local CLI behavior")
+def _(ctx):
+    repo, base, feature, main = fork(ctx)
+    before = state(repo)
+    queries = [
+        ("duplicate BRANCH", lambda: repo.branch("feature"), "Branch already exists: feature"),
+        ("missing SWITCH", lambda: repo.switch("missing"), "Unknown branch: missing"),
+        ("missing PATH", lambda: repo.path("bad", main), (None, "Unknown commit: bad")),
+        ("missing ANCESTORS", lambda: repo.ancestors("bad"), None),
+        ("empty SEARCH", lambda: repo.search_keyword("change missing"), []),
+    ]
+    for label, query, expected in queries:
+        equal(query(), expected, label + " result")
+        equal(state(repo), before, label + ": repository state preserved")
+
+    repo.switch("feature")
+    repo.commit("recovery")
+    equal(repo.branches, {"main": main, "feature": "0000004"}, "successful transition after rejection")
+    equal(repo.commits["0000004"].parents, [feature], "recovery parent")
+    equal(ids(repo.search_keyword("recovery")), ["0000004"], "recovery index")
+
+
+@case("empty_branch_roots_walk", 2)
+def _(ctx):
+    repo = new_repo(ctx)
+    repo.branch("other")
+    equal(repo.branches, {"main": None, "other": None}, "BRANCH before first COMMIT")
+    repo.commit("main root")
+    repo.switch("other")
+    repo.commit("other root")
+    main, other = "0000001", "0000002"
+    equal(repo.branches, {"main": main, "other": other}, "independent heads")
+    equal([repo.commits[h].parents for h in (main, other)], [[], []], "two roots")
+    equal(repo.children, {main: set(), other: set()}, "roots are disconnected")
+
+    before = state(repo)
+    equal(repo.path(main, other), ([], None), "known but disconnected PATH")
+    equal(ids(repo.ancestors(other)), [], "root ANCESTORS")
+    equal(ids(repo.log()), [main, other], "LOG includes both roots")
+    equal(ids(repo.search_keyword("root")), [main, other], "SEARCH spans roots")
+    equal(state(repo), before, "queries preserve disconnected graph")
+
+    repo.commit("other child")
+    child = "0000003"
+    equal(repo.path(other, child), ([other, child], None), "connected PATH in other branch")
+    equal(repo.path(main, child), ([], None), "other COMMIT keeps roots disconnected")
+    equal(ids(repo.ancestors(child)), [other], "ANCESTORS stays in other component")
+    equal(repo.branches, {"main": main, "other": child}, "only other head advances")
+
+
+@case("multiparent_walk", 3, "README internal DAG claim", optional=True)
+def _(ctx):
+    repo, base, feature, main = fork(ctx)
+    repo.commit("synthetic merge")
+    merge = "0000004"
+    repo.commits[merge].parents.append(feature)
+    repo.children[feature].add(merge)
+    repo.switch("feature")
+    repo.commit("feature tail")
+    feature_tail = "0000005"
+    repo.switch("main")
+    repo.commit("main tail")
+    main_tail = "0000006"
+
+    before = state(repo)
+    equal(ids(repo.log()), [base, feature, main, merge, feature_tail, main_tail], "LOG: both parents before merge")
+    equal(ids(repo.ancestors(main_tail)), [base, feature, main, merge], "ANCESTORS: both parent paths, no sibling tail")
+    equal(ids(repo.ancestors(feature_tail)), [base, feature], "ANCESTORS: feature path only")
+    equal(repo.path(feature_tail, main_tail), ([feature_tail, feature, merge, main_tail], None), "PATH through merge")
+    equal(repo.path(feature, main), ([feature, base, main], None), "PATH: equal-length tie through smaller hash")
+    equal(ids(repo.search_keyword("tail")), [feature_tail, main_tail], "SEARCH: both tails")
+    equal(state(repo), before, "combined queries preserve DAG and indexes")
 
 
 def run(args):

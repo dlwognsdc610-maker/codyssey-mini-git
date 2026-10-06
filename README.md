@@ -113,5 +113,7 @@ python3 cts.py
 
 CTS는 branch head, parent-first log, keyword/author index, ancestors, BFS path,
 quoted CLI, error path, stable merge sort와 `sorted()`/`.sort()` 미사용을 확인한다.
+명령별 상태 변화와 조회·오류 뒤 상태 보존, 빈 branch에서 생긴 독립 root,
+다중 parent와 여러 조회의 조합도 검사한다.
 실행 결과는 `cts-report.json`에 남는다. 1–3시간 평가 전 복습 순서, 설명 질문,
 선택 확장 범위와 현재 검증 결과는 [CTS_REVIEW.md](CTS_REVIEW.md)에 있다.
