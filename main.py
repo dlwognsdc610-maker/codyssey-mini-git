@@ -137,6 +137,10 @@ class MiniGit:
             self.keyword_index.setdefault(token, []).append(commit.hash)
 
     def commit(self, message):
+        # State walk:
+        #   old head(1) <-- new(2)     parents
+        #   old head(1) --> new(2)     children
+        #   node -> edges -> index -> move head.
         parent = self.branches[self.current_branch]
         parents = [] if parent is None else [parent]
         commit_hash = self._new_hash()
@@ -154,17 +158,28 @@ class MiniGit:
     def branch(self, name):
         if name in self.branches:
             return f"Branch already exists: {name}"
+        # Copy the head value:
+        #   main ----+--> 1
+        #   feature -+
+        #   later commit moves only the selected branch head.
         self.branches[name] = self.branches[self.current_branch]
         return f"Created branch: {name}"
 
     def switch(self, name):
         if name not in self.branches:
             return f"Unknown branch: {name}"
+        # Select which branch head the next commit will move.
         self.current_branch = name
         return f"Switched to branch: {name}"
 
     def _topological_commits(self, commit_hashes=None):
         """Return commits parent-first over the selected subgraph (Kahn)."""
+        # Forward walk (parent -> child):
+        #   1 --> 2 --+
+        #   |        |
+        #   +--> 3 --+--> 4
+        #   remaining parents of 4: 2 -> 1 -> 0.
+        #   ready when all its parent edges are processed.
         if commit_hashes is None:
             commit_hashes = self.commits
 
@@ -179,6 +194,9 @@ class MiniGit:
                 heappush(ready, commit_hash)
 
         result = []
+        # Invariant at the loop boundary:
+        #   ready holds every unvisited node with indegree=0.
+        #   indegree and ready are local walk state.
         while ready:
             current = heappop(ready)
             result.append(self.commits[current])
@@ -214,6 +232,11 @@ class MiniGit:
         if end not in self.commits:
             return None, f"Unknown commit: {end}"
 
+        # Example fork: 2 <-- 1 --> 3 (parent -> child).
+        # BFS walk:
+        #   queue:    [2] -> [1] -> [3]
+        #   previous:  3 -> 1 -> 2 -> None
+        #   reverse it -> path [2,1,3].
         queue = deque([start])
         previous = {start: None}
 
@@ -229,6 +252,7 @@ class MiniGit:
             for neighbor in self._neighbors(current):
                 if neighbor in previous:
                     continue
+                # First visit defines the previous edge once.
                 previous[neighbor] = current
                 queue.append(neighbor)
 
@@ -238,6 +262,10 @@ class MiniGit:
         if commit_hash not in self.commits:
             return None
 
+        # Parent walk:
+        #   2 <-- 1 --> 3 --> 4       parent -> child
+        #   start from 4: 4 -> 3 -> 1.
+        #   found={1,3}; sibling 2 stays outside this set.
         found = set()
         stack = self.commits[commit_hash].parents[:]
         while stack:
@@ -257,6 +285,8 @@ class MiniGit:
             return []
 
         first = self.keyword_index.get(tokens[0], [])
+        # Candidate walk, e.g. "main change":
+        #   main {3,4} & change {2,3} -> {3}.
         candidates = set(first)
         for token in tokens[1:]:
             candidates &= set(self.keyword_index.get(token, []))

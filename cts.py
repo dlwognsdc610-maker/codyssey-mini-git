@@ -40,6 +40,9 @@ def ids(nodes):
 
 
 def state(repo):
+    # Snapshot the values, including nested containers.
+    #   before -> one operation -> after
+    #   compare exactly which state changed.
     return {
         "initialized": repo.initialized,
         "user": repo.user,
@@ -63,6 +66,10 @@ def new_repo(ctx, user="Alice"):
 
 
 def fork(ctx):
+    # Parent -> child:
+    #   1 ---+--> 2 (feature)
+    #        |
+    #        +--> 3 (main)
     repo = new_repo(ctx)
     repo.commit("base")
     base = repo.branches["main"]
@@ -328,6 +335,9 @@ def _(ctx):
 
 @case("atom_state_walk", 1)
 def _(ctx):
+    # Per atom:
+    #   init -> commit(1) -> branch -> switch -> commit(2)
+    #   heads: {main:1, feature:1} -> {main:1, feature:2}.
     repo = new_repo(ctx)
     equal(repo.branches, {"main": None}, "INIT: empty main")
     equal(repo.next_id, 1, "INIT: first available ID")
@@ -362,6 +372,11 @@ def _(ctx):
 
 @case("fork_query_walk", 2)
 def _(ctx):
+    # Stored state S:
+    #   S -> LOG -> PATH -> ANCESTORS -> SEARCH -> LOG -> S.
+    #   then COMMIT(4) extends main:
+    #   1 ---+--> 2 (feature)
+    #        +--> 3 --> 4 (main)
     repo, base, feature, main = fork(ctx)
     before = state(repo)
     queries = [
@@ -389,6 +404,9 @@ def _(ctx):
 
 @case("rejected_transition_walk", 2, "local CLI behavior")
 def _(ctx):
+    # Rejected transition:
+    #   S --bad target--> S --switch(feature)--> S'
+    #   then 2 --> 4, feature=4; main=3.
     repo, base, feature, main = fork(ctx)
     before = state(repo)
     queries = [
@@ -411,6 +429,11 @@ def _(ctx):
 
 @case("empty_branch_roots_walk", 2)
 def _(ctx):
+    # Branch before first commit copies None.
+    # Later, each branch starts its own root:
+    #   main:  1
+    #   other: 2 --> 3
+    #   PATH(1,3) stays disconnected.
     repo = new_repo(ctx)
     repo.branch("other")
     equal(repo.branches, {"main": None, "other": None}, "BRANCH before first COMMIT")
@@ -439,9 +462,17 @@ def _(ctx):
 
 @case("multiparent_walk", 3, "README internal DAG claim", optional=True)
 def _(ctx):
+    # Parent -> child:
+    #        +--> 2 --+--> 5 (feature)
+    #        |       |
+    #   1 ---+       +--> 4 --> 6 (main)
+    #        |       |
+    #        +--> 3 --+
+    #   4 waits until both 2 and 3 are processed.
     repo, base, feature, main = fork(ctx)
     repo.commit("synthetic merge")
     merge = "0000004"
+    # Add the second parent and its reverse edge together.
     repo.commits[merge].parents.append(feature)
     repo.children[feature].add(merge)
     repo.switch("feature")
