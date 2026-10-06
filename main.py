@@ -4,11 +4,11 @@
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+from heapq import heappop, heappush
 import shlex
 import time
 
 
-@dataclass
 """
 commit {
  - hash
@@ -22,6 +22,7 @@ Simply set relations:
    commit
    branch
    commit addressed as ssa-like structures.
+
    if (somethings that changed):
       always consider it default as ssa-form.
       so always new commits inserted,
@@ -33,6 +34,7 @@ Simply set relations:
    
 
 """
+@dataclass
 class Commit:
     """One immutable commit node in the DAG."""
     hash: str
@@ -44,20 +46,25 @@ class Commit:
 
 def merge_sort(items, key):
     #Stable O(n log n) merge sort without sorted() or list.sort().
-    #Invariant:
-    #   we recursivly tracking sorted state,
-    #   so left and right was already sorted.
-    #Then, we only-check it's new structures only.
+
+    # Basis.
     if len(items) <= 1:
         return items[:]
 
     mid = len(items) // 2
+
+    # Recurise walk.
     left = merge_sort(items[:mid], key)
     right = merge_sort(items[mid:], key)
     result = []
     i = 0
     j = 0
 
+
+    #Invariant:
+    #   we recursivly tracking bisected sort state,
+    #   so left block and right block was already sorted.
+    #   Then, we only-check it's new structures only.
     while i < len(left) and j < len(right):
         if key(left[i]) <= key(right[j]):
             result.append(left[i])
@@ -81,6 +88,7 @@ class MiniGit:
     """Repository state and graph/index algorithms for the Mini Git commands."""
 
     def __init__(self):
+        # Null state.
         self.initialized = False
         self.user = None
         self.current_branch = None
@@ -139,8 +147,8 @@ class MiniGit:
         for parent_hash in parents:
             self.children.setdefault(parent_hash, set()).add(commit_hash)
 
-        self.branches[self.current_branch] = commit_hash
         self._index_commit(node)
+        self.branches[self.current_branch] = commit_hash
         return f"[{self.current_branch} {commit_hash}] {message}"
 
     def branch(self, name):
@@ -155,29 +163,32 @@ class MiniGit:
         self.current_branch = name
         return f"Switched to branch: {name}"
 
-    def _topological_commits(self):
-        """Return all commits with every parent before each child (Kahn)."""
+    def _topological_commits(self, commit_hashes=None):
+        """Return commits parent-first over the selected subgraph (Kahn)."""
+        if commit_hashes is None:
+            commit_hashes = self.commits
+
         indegree = {}
-        for commit_hash, node in self.commits.items():
-            indegree[commit_hash] = len(node.parents)
+        for commit_hash in commit_hashes:
+            node = self.commits[commit_hash]
+            indegree[commit_hash] = sum(parent in commit_hashes for parent in node.parents)
 
         ready = []
-        for commit_hash in self.commits:
-            if indegree[commit_hash] == 0:
-                ready.append(commit_hash)
-        ready = merge_sort(ready, lambda value: value)
+        for commit_hash, degree in indegree.items():
+            if degree == 0:
+                heappush(ready, commit_hash)
 
         result = []
         while ready:
-            current = ready.pop(0)
+            current = heappop(ready)
             result.append(self.commits[current])
 
-            next_nodes = merge_sort(list(self.children.get(current, set())), lambda value: value)
-            for child in next_nodes:
+            for child in self.children.get(current, set()):
+                if child not in indegree:
+                    continue
                 indegree[child] -= 1
                 if indegree[child] == 0:
-                    ready.append(child)
-                    ready = merge_sort(ready, lambda value: value)
+                    heappush(ready, child)
 
         return result
 
@@ -203,20 +214,23 @@ class MiniGit:
         if end not in self.commits:
             return None, f"Unknown commit: {end}"
 
-        queue = deque([[start]])
-        visited = {start}
+        queue = deque([start])
+        previous = {start: None}
 
         while queue:
-            path = queue.popleft()
-            current = path[-1]
+            current = queue.popleft()
             if current == end:
-                return path, None
+                path = []
+                while current is not None:
+                    path.append(current)
+                    current = previous[current]
+                return path[::-1], None
 
             for neighbor in self._neighbors(current):
-                if neighbor in visited:
+                if neighbor in previous:
                     continue
-                visited.add(neighbor)
-                queue.append(path + [neighbor])
+                previous[neighbor] = current
+                queue.append(neighbor)
 
         return [], None
 
@@ -235,8 +249,7 @@ class MiniGit:
                 stack.append(parent)
 
         # Parent-first makes the result easier to read.
-        topo = self._topological_commits()
-        return [node for node in topo if node.hash in found]
+        return self._topological_commits(found)
 
     def search_keyword(self, query):
         tokens = query.lower().split()
@@ -282,6 +295,7 @@ def invalid_args():
     print("Invalid args")
 
 
+# Loop:
 def repl():
     repo = MiniGit()
 
@@ -289,6 +303,7 @@ def repl():
         try:
             line = input("mini-git> ")
         except EOFError:
+            # No op.
             break
 
         try:
@@ -379,5 +394,6 @@ def repl():
             print(f"Unknown command: {args[0]}")
 
 
+#Entry point.
 if __name__ == "__main__":
     repl()

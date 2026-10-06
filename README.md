@@ -16,9 +16,10 @@ branches[name] = commit hash    branch head
 HEAD = current branch
 ```
 
-새 commit은 현재 branch head를 parent로 잡고 branch head를 새 hash로 옮긴다. 이미
-존재하는 commit만 parent로 잡으므로 이 경로에서는 cycle이 생기지 않고 commit graph는
-DAG로 유지된다.
+새 commit은 현재 branch head를 parent로 잡는다. commit table, parent/children edge,
+keyword/author index를 갱신한 뒤 branch head를 새 hash로 옮긴다. 이미 존재하는
+commit만 parent로 잡으므로 이 경로에서는 cycle이 생기지 않고 commit graph는 DAG로
+유지된다.
 
 각 commit은 아래 필드만 가진다.
 
@@ -32,14 +33,17 @@ hash는 세션 안에서 증가 counter를 7자리 hex로 표현한다. 암호�
 ## 알고리즘
 
 `LOG`는 Kahn 방식으로 indegree가 0인 commit부터 꺼내서 **parent가 child보다 항상
-먼저** 나오게 한다.
+먼저** 나오게 한다. 준비된 commit을 최소 힙에 두고 hash가 작은 것부터 꺼낸다.
+꺼낸 commit의 children마다 남은 parent 수를 하나 줄이고, 0이 된 child를 힙에 넣는다.
 
 `PATH a b`는 parent edge를 무방향으로 본다. `parents + children`을 이웃으로 두고
 BFS를 사용하므로 간선 수가 가장 작은 경로가 나온다. 같은 길이의 경로에서는 hash
-순서로 이웃을 방문해 문자열 기준으로 더 작은 경로를 먼저 고른다.
+순서로 이웃을 방문해 문자열 기준으로 더 작은 경로를 먼저 고른다. 첫 방문 때 이전
+commit을 기록하고, 목적지에 도착하면 그 연결을 거슬러 올라가 경로를 복원한다.
 
-`ANCESTORS`는 한 commit에서 parent chain만 따라간다. `children`은 역방향 edge라
-PATH에서 양방향 탐색할 때 쓴다.
+`ANCESTORS`는 한 commit에서 parent chain만 따라가 조상을 모은다. 그 집합에 Kahn
+순회를 적용해 parent-first 결과를 만든다. `children`은 역방향 edge라 PATH에서
+양방향 탐색할 때 쓴다.
 
 검색할 때 commit 전체를 다시 훑지 않는다.
 
@@ -111,4 +115,3 @@ CTS는 branch head, parent-first log, keyword/author index, ancestors, BFS path,
 quoted CLI, error path, stable merge sort와 `sorted()`/`.sort()` 미사용을 확인한다.
 실행 결과는 `cts-report.json`에 남는다. 1–3시간 평가 전 복습 순서, 설명 질문,
 선택 확장 범위와 현재 검증 결과는 [CTS_REVIEW.md](CTS_REVIEW.md)에 있다.
-

@@ -11,7 +11,7 @@ python3 cts.py
 
 종료 코드 0은 선택한 로컬 항목이 전부 PASS, 1은 FAIL 또는 SKIP이 있다는 뜻이다. 결과는 [cts-report.json](cts-report.json)에 기록된다. 각 항목은 ID·단계·근거·결과·실패 이유를 남기고 검사 대상 `main.py`의 SHA-256도 기록한다. `--source 다른/main.py`로 별도 후보를 검사할 수 있다. CTS는 검사 대상 파일을 임시 디렉터리에 복사해서 실행하며 실제 `.git`, 작업 파일, 저장소 상태를 수정하지 않는다. 선택 확장은 `python3 cts.py --stretch`로 실행한다.
 
-2026-10-06 현재 원본의 결과: **PASS 0 · FAIL 1 · SKIP 22**. `main.py` 12행에서 `@dataclass`와 `class Commit` 사이에 독립 문자열이 놓여 `SyntaxError`가 발생한다. 그래서 기능 실패 22개라고 해석하면 안 된다. 이 소스 오류 때문에 기능 검사가 아직 시작되지 못한 것이다. `main.py`는 이 CTS 작업에서 수정하지 않았다.
+2026-10-06 현재 원본에 `python3 cts.py --stretch`를 실행한 결과: **PASS 24 · FAIL 0 · SKIP 0**. 기본 23개와 선택 확장 1개가 모두 통과했다. `@dataclass`를 `class Commit` 바로 앞으로 옮겨 문법 오류를 고쳤고, commit 상태 갱신 순서와 LOG·PATH·ANCESTORS 순회를 정리한 실제 `main.py`를 검사했다.
 
 ## 1–3시간 복습 경로
 
@@ -36,8 +36,9 @@ python3 cts.py
 
 ## CTS 자체 점검 기록
 
-- 원본 `main.py`: 문법 오류를 정확히 FAIL로 기록하고 의존 항목은 SKIP으로 기록했다.
+- 변경 전 원본 `main.py`: 문법 오류를 정확히 FAIL로 기록하고 의존 항목은 SKIP으로 기록했다.
 - 원본을 임시 디렉터리에 복사해, 이미 제안된 `@dataclass` 위치 수정 **한 곳만** 적용한 진단 후보: 기본 23/23, `--stretch` 포함 24/24 PASS. 이것은 원본 PASS가 아니다.
 - 별도 임시 후보에서 branch 생성 시 head 복사를 망가뜨리자 `branch_fork` 등에서 실패했고, merge sort의 `<=`를 `<`로 바꾸자 `stable_merge_sort`에서 실패했다. 두 경우 모두 CTS 종료 코드 1을 확인했다.
+- 현재 원본 `main.py`: 기존 CTS의 `--stretch` 포함 24/24 PASS, 종료 코드 0을 확인했다.
 
 필수 기능을 넘어서는 `multiparent_tie_break`는 **선택 확장**이다. 현재 CLI에는 merge 명령이 없어 다중 parent 상태를 직접 만들 수 없기 때문이다. 이 항목은 내부 자료구조에 두 번째 parent를 주입해 README의 경로 동률 설명을 점검한다.
